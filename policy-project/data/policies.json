@@ -1,0 +1,52 @@
+[
+    {
+        "policy_id": "DATA-SHARING",
+        "version": "3.0",
+        "effective_date": "2025-01-01",
+        "region": "GLOBAL",
+        "department": "ALL",
+        "vendor": "ALL",
+        "supersedes": null,
+        "content": "External sharing is permitted only with approved vendors."
+    },
+    {
+        "policy_id": "DATA-SHARING",
+        "version": "5.0",
+        "effective_date": "2026-04-01",
+        "region": "GLOBAL",
+        "department": "ALL",
+        "vendor": "ALL",
+        "supersedes": "3.0",
+        "content": "External sharing is permitted only with approved vendors."
+    },
+    {
+        "policy_id": "RETENTION",
+        "version": "3.0",
+        "effective_date": "2025-01-01",
+        "region": "GLOBAL",
+        "department": "ALL",
+        "vendor": "ALL",
+        "supersedes": null,
+        "content": "Customer data may be retained according to the standard retention period."
+    },
+    {
+        "policy_id": "EU-RETENTION",
+        "version": "2.0",
+        "effective_date": "2026-01-01",
+        "region": "EU",
+        "department": "Support",
+        "vendor": "ALL",
+        "supersedes": "1.0",
+        "content": "EU customer data handled by Support may be retained for 30 days."
+    },
+    {
+        "policy_id": "VENDOR-EXCEPTION",
+        "version": "1.0",
+        "effective_date": "2026-06-01",
+        "region": "GLOBAL",
+        "department": "Analytics",
+        "vendor": "Vendor-X",
+        "supersedes": null,
+        "content": "Vendor-X is not approved for Dataset Y."
+    }
+]
