@@ -5,9 +5,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from .llm import LLMExtractionError, extract_policy_rules
 from .policy_engine import PolicyStatus, evaluate_policy
 from .retriever import retrieve_documents
 from .state import AgentState, Evidence
+from .validation import validate_policy_rules
 
 
 def retrieve_node(
@@ -46,19 +48,46 @@ def retrieve_node(
 
 
 def extract_rules_node(state: AgentState) -> AgentState:
-    """Pass through explicitly structured rules without interpreting text.
-
-    Natural-language extraction is intentionally unavailable until the
-    project provides an extractor or LLM utility. Retrieved chunks may still
-    provide a ``rules`` or ``policy_rules`` list for deterministic integration.
-    """
+    """Extract and validate rules from retrieved policy chunks."""
 
     updated = dict(state)
     existing = state.get("extracted_policies")
     if isinstance(existing, list) and existing:
-        rules = [rule for rule in existing if isinstance(rule, Mapping)]
+        rules = validate_policy_rules(existing)
+        if len(rules) != len(existing):
+            _add_warning(updated, "Some existing policy rules failed validation")
     else:
-        rules = _rules_from_chunks(state.get("relevant_chunks", []))
+        rules = []
+        chunks = state.get("relevant_chunks", [])
+        if isinstance(chunks, list):
+            for chunk in chunks:
+                if not isinstance(chunk, Mapping):
+                    continue
+                content = chunk.get("content")
+                if not isinstance(content, str) or not content.strip():
+                    continue
+
+                structured = chunk.get("rules", chunk.get("policy_rules"))
+                if structured is not None:
+                    candidates = [structured] if isinstance(structured, Mapping) else structured
+                    candidates = _attach_chunk_evidence(candidates, chunk)
+                else:
+                    try:
+                        candidates = extract_policy_rules(
+                            content,
+                            source_metadata=chunk.get("metadata", {}),
+                        )
+                    except LLMExtractionError as exc:
+                        _add_warning(updated, str(exc))
+                        continue
+                    except Exception as exc:
+                        _add_error(updated, f"Unexpected policy extraction failure: {exc}")
+                        continue
+
+                validated = validate_policy_rules(candidates, source_chunk=chunk)
+                if candidates and not validated:
+                    _add_warning(updated, "LLM returned no reliable policy rules for a retrieved chunk")
+                rules.extend(validated)
 
     updated["extracted_policies"] = rules
     updated["applicable_rules"] = rules
@@ -150,12 +179,35 @@ def _rules_from_chunks(chunks: Any) -> list[Mapping[str, Any]]:
     return rules
 
 
+def _attach_chunk_evidence(candidates: Any, chunk: Mapping[str, Any]) -> Any:
+    """Give legacy structured rules trusted evidence before validation."""
+
+    if isinstance(candidates, Mapping):
+        candidates = [candidates]
+    if not isinstance(candidates, list):
+        return candidates
+    evidence = _chunk_evidence(chunk)
+    result: list[Any] = []
+    for candidate in candidates:
+        if isinstance(candidate, Mapping):
+            rule = dict(candidate)
+            if "evidence" not in rule and evidence:
+                rule["evidence"] = evidence
+            result.append(rule)
+        else:
+            result.append(candidate)
+    return result
+
+
 def _chunk_evidence(chunk: Mapping[str, Any]) -> list[Evidence]:
     content = chunk.get("content")
     metadata = chunk.get("metadata", {})
     if not isinstance(content, str) or not content.strip() or not isinstance(metadata, Mapping):
         return []
-    evidence: Evidence = {"excerpt": content, "metadata": dict(metadata)}
+    evidence_metadata = dict(metadata)
+    if chunk.get("chunk_id") is not None:
+        evidence_metadata["chunk_id"] = chunk["chunk_id"]
+    evidence: Evidence = {"excerpt": content, "metadata": evidence_metadata}
     source = metadata.get("source") or metadata.get("title")
     if isinstance(source, str):
         evidence["source"] = source
