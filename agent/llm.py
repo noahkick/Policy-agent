@@ -7,10 +7,13 @@ import os
 from collections.abc import Mapping
 from typing import Any
 
+from dotenv import load_dotenv
+
 from .prompts import EXTRACTION_SYSTEM_PROMPT, build_extraction_prompt
 
 
 DEFAULT_MODEL = "gpt-4o-mini"
+load_dotenv()
 
 
 class LLMExtractionError(RuntimeError):
