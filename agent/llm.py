@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import random
+import time
 from collections.abc import Mapping
 from typing import Any
 
@@ -62,18 +64,27 @@ def extract_policy_rules(
 )}
 """
 
-    try:
-        response = client.models.generate_content(
-            model=model,
-            contents=prompt,
-            config={
-                "response_mime_type": "application/json",
-            },
-        )
-    except Exception as exc:
-        raise LLMExtractionError(
-            f"Gemini policy extraction failed: {exc}"
-        ) from exc
+    for attempt in range(4):
+        try:
+            response = client.models.generate_content(
+                model=model,
+                contents=prompt,
+                config={
+                    "response_mime_type": "application/json",
+                },
+            )
+            break
+        except Exception as exc:
+            if (
+                _is_quota_exhaustion_error(exc)
+                or not _is_transient_gemini_error(exc)
+                or attempt == 3
+            ):
+                raise LLMExtractionError(
+                    f"Gemini policy extraction failed: {exc}"
+                ) from exc
+            delay = min(2 ** (attempt + 1), 8) + random.uniform(0, 0.5)
+            time.sleep(delay)
 
     content = _response_content(response)
 
@@ -100,6 +111,30 @@ def extract_policy_rules(
         )
 
     return [dict(rule) for rule in rules]
+
+
+def _is_quota_exhaustion_error(error: Exception) -> bool:
+    """Return whether a Gemini error indicates exhausted quota."""
+
+    error_text = str(error)
+    return (
+        "RESOURCE_EXHAUSTED" in error_text
+        or "GenerateRequestsPerDayPerModel-FreeTier" in error_text
+    )
+
+
+def _is_transient_gemini_error(error: Exception) -> bool:
+    """Return whether a Gemini error should be retried."""
+
+    status_code = getattr(error, "status_code", None)
+    if status_code is None:
+        status_code = getattr(error, "code", None)
+    if callable(status_code):
+        status_code = status_code()
+    if status_code is None:
+        response = getattr(error, "response", None)
+        status_code = getattr(response, "status_code", None)
+    return status_code in {429, 500, 502, 503, 504}
 
 
 def _response_content(response: Any) -> str:
