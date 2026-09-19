@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from collections.abc import Mapping
 from typing import Any, TypedDict
 
 
@@ -22,6 +23,10 @@ class IngestionError(ValueError):
 
 SUPPORTED_SUFFIXES = frozenset({".txt", ".md", ".markdown"})
 _HEADING_PATTERN = re.compile(r"^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$")
+_POLICY_METADATA_PATTERN = re.compile(
+    r"^\s*\*\*(Policy ID|Version|Effective date|Scope|Region|Department|Vendor):\*\*\s*(.*?)\s*$",
+    re.IGNORECASE,
+)
 
 
 def chunk_text(
@@ -31,6 +36,7 @@ def chunk_text(
     *,
     source: str | None = None,
     document_name: str | None = None,
+    policy_metadata: Mapping[str, Any] | None = None,
 ) -> list[PolicyChunk]:
     """Split text at paragraph boundaries while retaining section metadata."""
 
@@ -51,11 +57,11 @@ def chunk_text(
     for paragraph, section in sections:
         if len(paragraph) > chunk_size:
             if current_text:
-                chunks.append(_make_chunk(current_text, current_section, source, document_name, chunk_number))
+                chunks.append(_make_chunk(current_text, current_section, source, document_name, chunk_number, policy_metadata))
                 chunk_number += 1
                 current_text = ""
             for piece in _split_long_text(paragraph, chunk_size, overlap):
-                chunks.append(_make_chunk(piece, section, source, document_name, chunk_number))
+                chunks.append(_make_chunk(piece, section, source, document_name, chunk_number, policy_metadata))
                 chunk_number += 1
             current_section = section
             continue
@@ -63,7 +69,7 @@ def chunk_text(
         separator = "\n\n" if current_text else ""
         candidate = f"{current_text}{separator}{paragraph}"
         if current_text and len(candidate) > chunk_size:
-            chunks.append(_make_chunk(current_text, current_section, source, document_name, chunk_number))
+            chunks.append(_make_chunk(current_text, current_section, source, document_name, chunk_number, policy_metadata))
             chunk_number += 1
             carry = current_text[-overlap:] if overlap else ""
             current_text = f"{carry}\n\n{paragraph}" if carry else paragraph
@@ -73,7 +79,7 @@ def chunk_text(
             current_section = section or current_section
 
     if current_text.strip():
-        chunks.append(_make_chunk(current_text, current_section, source, document_name, chunk_number))
+        chunks.append(_make_chunk(current_text, current_section, source, document_name, chunk_number, policy_metadata))
     return chunks
 
 
@@ -119,13 +125,45 @@ def _load_file(path: Path, chunk_size: int, overlap: int) -> list[PolicyChunk]:
     except (OSError, UnicodeError) as exc:
         raise IngestionError(f"could not read policy file: {path}") from exc
 
+    policy_metadata = _extract_policy_metadata(text)
     return chunk_text(
         text,
         chunk_size=chunk_size,
         overlap=overlap,
         source=path.name,
         document_name=path.stem,
+        policy_metadata=policy_metadata,
     )
+
+
+def _extract_policy_metadata(text: str) -> dict[str, Any]:
+    """Extract the inline metadata header used by the Markdown policy files."""
+
+    metadata: dict[str, Any] = {}
+    field_names = {
+        "policy id": "policy_id",
+        "version": "version",
+        "effective date": "effective_date",
+        "scope": "scope",
+        "region": "region",
+        "department": "department",
+        "vendor": "vendor",
+    }
+    for line in text.splitlines():
+        match = _POLICY_METADATA_PATTERN.match(line)
+        if not match:
+            continue
+        key = field_names[match.group(1).casefold()]
+        value = match.group(2).strip()
+        if value:
+            metadata[key] = value
+
+        if key == "scope":
+            for scope_key, scope_value in re.findall(
+                r"\b(region|department|vendor)\s*=\s*([^;,]+)", value, re.IGNORECASE
+            ):
+                metadata[scope_key.casefold()] = scope_value.strip()
+    return metadata
 
 
 def _paragraphs_with_sections(text: str) -> list[tuple[str, str | None]]:
@@ -169,6 +207,7 @@ def _make_chunk(
     source: str | None,
     document_name: str | None,
     chunk_number: int,
+    policy_metadata: Mapping[str, Any] | None = None,
 ) -> PolicyChunk:
     metadata: dict[str, Any] = {}
     if source:
@@ -177,6 +216,8 @@ def _make_chunk(
         metadata["title"] = document_name
     if section:
         metadata["section"] = section
+    if policy_metadata:
+        metadata.update(policy_metadata)
 
     chunk: PolicyChunk = {
         "content": content.strip(),

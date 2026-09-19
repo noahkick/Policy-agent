@@ -27,7 +27,13 @@ def _rule(effect: str, excerpt: str) -> dict[str, object]:
 
 
 class EndToEndTests(unittest.TestCase):
-    def _run(self, documents: list[dict[str, object]], rules: list[dict[str, object]]) -> dict[str, object]:
+    def _run(
+        self,
+        documents: list[dict[str, object]],
+        rules: list[dict[str, object]],
+        *,
+        action: str = "share",
+    ) -> dict[str, object]:
         store = PolicyStore()
         store.add_documents(documents)
         def extract_for_chunk(content: str, **_: object) -> list[dict[str, object]]:
@@ -39,7 +45,7 @@ class EndToEndTests(unittest.TestCase):
                     "query": "Can I share customer data with a vendor?",
                     "execution_metadata": {
                         "situation": {
-                            "action": "share",
+                            "action": action,
                             "resource": "customer data",
                         }
                     },
@@ -72,6 +78,102 @@ class EndToEndTests(unittest.TestCase):
         )
         self.assertEqual(result["decision"], "CONFLICT")
         self.assertEqual(len(result["conflicts"]), 2)
+
+    def test_unknown_access_preserves_supporting_evidence(self) -> None:
+        text = "Access to customer data requires a corporate laptop and MFA."
+        rule = {
+            "action": "access",
+            "resource": "customer data",
+            "effect": "ALLOW",
+            "conditions": {"device": "corporate laptop", "mfa": "active"},
+            "evidence": [{"excerpt": text}],
+        }
+        result = self._run(
+            [_document(text, "access")],
+            [rule],
+            action="access",
+        )
+        self.assertEqual(result["decision"], "UNKNOWN")
+        self.assertEqual(result["supporting_excerpts"][0]["excerpt"], text)
+        self.assertIn("Supporting evidence:", result["final_answer"])
+
+    def test_analytics_analyst_access_with_required_context_allows(self) -> None:
+        text = "Analysts may access customer data from a corporate laptop with MFA for reporting and investigation work."
+        rule = {
+            "action": "access",
+            "resource": "customer data",
+            "effect": "ALLOW",
+            "conditions": {
+                "required_for_assigned_work": True,
+                "device": "corporate laptop",
+                "mfa": True,
+            },
+            "evidence": [{"excerpt": text}],
+        }
+        store = PolicyStore()
+        store.add_documents([_document(text, "analyst-access")])
+        with patch("agent.nodes.extract_policy_rules", return_value=[rule]):
+            result = run_agent(
+                {
+                    "query": "Can the Analytics department access Customer Data in India?",
+                    "execution_metadata": {
+                        "situation": {
+                            "region": "India",
+                            "department": "Analytics",
+                            "role": "Analyst",
+                            "resource": "Customer Data",
+                            "action": "access",
+                            "device": "corporate laptop",
+                            "mfa": True,
+                            "business_purpose": "reporting and investigation work",
+                            "required_for_assigned_work": True,
+                            "policy_date": "2026-09-19",
+                        }
+                    },
+                },
+                vector_store=store,
+            )
+        self.assertEqual(result["decision"], "ALLOW")
+        self.assertIn("Supporting evidence:", result["final_answer"])
+
+    def test_analytics_analyst_access_with_inactive_mfa_is_not_allowed(self) -> None:
+        text = "Analysts may access customer data from a corporate laptop with MFA for reporting and investigation work."
+        rule = {
+            "action": "access",
+            "resource": "customer data",
+            "effect": "ALLOW",
+            "conditions": {
+                "required_for_assigned_work": True,
+                "device": "corporate laptop",
+                "mfa": True,
+            },
+            "evidence": [{"excerpt": text}],
+        }
+        store = PolicyStore()
+        store.add_documents([_document(text, "analyst-access-inactive-mfa")])
+        with patch("agent.nodes.extract_policy_rules", return_value=[rule]):
+            result = run_agent(
+                {
+                    "query": "Can the Analytics department access Customer Data in India?",
+                    "execution_metadata": {
+                        "situation": {
+                            "region": "India",
+                            "department": "Analytics",
+                            "role": "Analyst",
+                            "resource": "Customer Data",
+                            "action": "access",
+                            "device": "corporate laptop",
+                            "mfa": False,
+                            "business_purpose": "reporting and investigation work",
+                            "required_for_assigned_work": True,
+                            "policy_date": "2026-09-19",
+                        }
+                    },
+                },
+                vector_store=store,
+            )
+        self.assertEqual(result["decision"], "UNKNOWN")
+        self.assertNotIn("mfa", result["policy_evaluation_result"]["missing_context"])
 
 
 if __name__ == "__main__":

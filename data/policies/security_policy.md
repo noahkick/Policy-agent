@@ -3,7 +3,7 @@
 **Policy ID:** DEMO-SECURITY-DEVICE  
 **Version:** 1.0  
 **Effective date:** 2026-01-20  
-**Scope:** Fictional Acme Demo authentication and device controls for customer-data access.
+**Scope:** region=ALL; department=ALL; vendor=ALL
 
 ## Purpose and Definitions
 

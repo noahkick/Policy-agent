@@ -5,8 +5,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from .demo_policy_cache import cached_rules_for_metadata
 from .llm import LLMExtractionError, extract_policy_rules
-from .policy_engine import PolicyStatus, evaluate_policy
+from .versioned_policy_engine import PolicyStatus, evaluate_policy
 from .retriever import retrieve_documents
 from .state import AgentState, Evidence
 from .validation import validate_policy_rules
@@ -51,13 +52,16 @@ def extract_rules_node(state: AgentState) -> AgentState:
     """Extract and validate rules from retrieved policy chunks."""
 
     updated = dict(state)
+    extraction_sources: set[str] = set()
     existing = state.get("extracted_policies")
     if isinstance(existing, list) and existing:
         rules = validate_policy_rules(existing)
+        extraction_sources.add("provided")
         if len(rules) != len(existing):
             _add_warning(updated, "Some existing policy rules failed validation")
     else:
         rules = []
+        cached_policy_ids: set[str] = set()
         chunks = state.get("relevant_chunks", [])
         if isinstance(chunks, list):
             for chunk in chunks:
@@ -71,26 +75,56 @@ def extract_rules_node(state: AgentState) -> AgentState:
                 if structured is not None:
                     candidates = [structured] if isinstance(structured, Mapping) else structured
                     candidates = _attach_chunk_evidence(candidates, chunk)
+                    extraction_sources.add("provided")
                 else:
                     try:
                         candidates = extract_policy_rules(
                             content,
                             source_metadata=chunk.get("metadata", {}),
                         )
+                        extraction_sources.add("llm")
                     except LLMExtractionError as exc:
-                        _add_warning(updated, str(exc))
-                        continue
+                        metadata = chunk.get("metadata", {})
+                        policy_id = metadata.get("policy_id") if isinstance(metadata, Mapping) else None
+                        candidates = []
+                        if policy_id not in cached_policy_ids and isinstance(metadata, Mapping):
+                            candidates = cached_rules_for_metadata(metadata)
+                        if candidates:
+                            cached_policy_ids.add(policy_id)
+                            candidates = _attach_chunk_evidence(candidates, chunk)
+                            extraction_sources.add("cached_demo")
+                            _add_warning(updated, "LLM extraction unavailable; used cached demo rules")
+                        else:
+                            _add_warning(updated, "Structured policy rules unavailable for a retrieved policy")
+                            continue
                     except Exception as exc:
-                        _add_error(updated, f"Unexpected policy extraction failure: {exc}")
-                        continue
+                        metadata = chunk.get("metadata", {})
+                        policy_id = metadata.get("policy_id") if isinstance(metadata, Mapping) else None
+                        candidates = []
+                        if policy_id not in cached_policy_ids and isinstance(metadata, Mapping):
+                            candidates = cached_rules_for_metadata(metadata)
+                        if candidates:
+                            cached_policy_ids.add(policy_id)
+                            candidates = _attach_chunk_evidence(candidates, chunk)
+                            extraction_sources.add("cached_demo")
+                            _add_warning(updated, "LLM extraction unavailable; used cached demo rules")
+                        else:
+                            _add_warning(updated, "Structured policy rules unavailable for a retrieved policy")
+                            continue
 
                 validated = validate_policy_rules(candidates, source_chunk=chunk)
                 if candidates and not validated:
                     _add_warning(updated, "LLM returned no reliable policy rules for a retrieved chunk")
-                rules.extend(validated)
+                rules.extend(_attach_policy_metadata(validated, chunk))
 
     updated["extracted_policies"] = rules
     updated["applicable_rules"] = rules
+    if not extraction_sources:
+        updated["extraction_source"] = "unavailable"
+    elif len(extraction_sources) == 1:
+        updated["extraction_source"] = next(iter(extraction_sources))
+    else:
+        updated["extraction_source"] = "mixed"
     if not rules:
         _add_warning(
             updated,
@@ -115,6 +149,7 @@ def policy_evaluation_node(state: AgentState) -> AgentState:
             "applicable_rules": [],
             "conflicts": [],
             "evidence": [],
+            "missing_context": [],
         }
 
     updated["policy_evaluation_result"] = result
@@ -197,6 +232,32 @@ def _attach_chunk_evidence(candidates: Any, chunk: Mapping[str, Any]) -> Any:
         else:
             result.append(candidate)
     return result
+
+
+def _attach_policy_metadata(
+    rules: list[dict[str, Any]], chunk: Mapping[str, Any]
+) -> list[dict[str, Any]]:
+    metadata = chunk.get("metadata", {})
+    if not isinstance(metadata, Mapping):
+        return rules
+
+    policy_fields = ("policy_id", "version", "effective_date")
+    scope_fields = ("region", "department", "vendor")
+    policy_scope = {
+        field: metadata[field]
+        for field in scope_fields
+        if metadata.get(field) is not None
+    }
+    enriched: list[dict[str, Any]] = []
+    for candidate in rules:
+        rule = dict(candidate)
+        for field in policy_fields:
+            if metadata.get(field) is not None:
+                rule[field] = metadata[field]
+        if policy_scope:
+            rule["policy_scope"] = policy_scope
+        enriched.append(rule)
+    return enriched
 
 
 def _chunk_evidence(chunk: Mapping[str, Any]) -> list[Evidence]:

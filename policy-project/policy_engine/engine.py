@@ -1,3 +1,10 @@
+"""Legacy adapter retained for the standalone policy-project test fixture.
+
+The application canonical engine is ``agent.versioned_policy_engine``. This
+package is not imported by the application and remains only for compatibility
+with the original policy-project fixture.
+"""
+
 from policy_engine.loader import load_policies
 from policy_engine.search import search_policy
 from policy_engine.version import get_active_version

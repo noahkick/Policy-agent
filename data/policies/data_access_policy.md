@@ -3,7 +3,7 @@
 **Policy ID:** DEMO-DATA-ACCESS  
 **Version:** 1.0  
 **Effective date:** 2026-01-15  
-**Scope:** Fictional Acme Demo internal systems and personnel handling customer data.
+**Scope:** region=ALL; department=ALL; vendor=ALL
 
 ## Purpose and Definitions
 

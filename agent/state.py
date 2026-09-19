@@ -44,6 +44,7 @@ class AgentState(TypedDict, total=False):
     # Policy extraction and analysis.
     extracted_policies: list[Any]
     applicable_rules: list[Any]
+    extraction_source: str
     policy_conditions: list[Any]
     conflicts: list[Any]
     intermediate_analysis: Any

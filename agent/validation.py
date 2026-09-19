@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from .policy_engine import PolicyStatus
+from .versioned_policy_engine import PolicyStatus
 from .state import Evidence
 
 
@@ -58,6 +58,11 @@ def validate_policy_rule(
             isinstance(key, str) for key in rule[field]
         ):
             return None
+        if isinstance(rule.get(field), Mapping):
+            normalized = _normalize_condition_keys(rule[field])
+            if normalized is None:
+                return None
+            rule[field] = normalized
 
     evidence = _validated_evidence(rule["evidence"], source_chunk)
     if evidence is None:
@@ -118,6 +123,26 @@ def _standalone_evidence(value: list[Any]) -> list[Evidence] | None:
             return None
         result.append(dict(item))
     return result or None
+
+
+_CONDITION_ALIASES = {
+    "mfa": "mfa",
+    "mfa_active": "mfa",
+    "mfa active": "mfa",
+    "purpose": "business_purpose",
+    "business purpose": "business_purpose",
+    "business_purpose": "business_purpose",
+}
+
+
+def _normalize_condition_keys(value: Mapping[str, Any]) -> dict[str, Any] | None:
+    normalized: dict[str, Any] = {}
+    for key, condition_value in value.items():
+        canonical_key = _CONDITION_ALIASES.get(key.strip().casefold(), key)
+        if canonical_key in normalized and normalized[canonical_key] != condition_value:
+            return None
+        normalized[canonical_key] = condition_value
+    return normalized
 
 
 __all__ = ["REQUIRED_FIELDS", "RULE_FIELDS", "validate_policy_rule", "validate_policy_rules"]

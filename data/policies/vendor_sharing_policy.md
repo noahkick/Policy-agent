@@ -3,7 +3,7 @@
 **Policy ID:** DEMO-VENDOR-SHARING  
 **Version:** 1.0  
 **Effective date:** 2026-03-01  
-**Scope:** Fictional Acme Demo sharing of customer data with external vendors.
+**Scope:** region=ALL; department=ALL; vendor=ALL
 
 ## Purpose and Definitions
 

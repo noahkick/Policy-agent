@@ -122,7 +122,7 @@ class PolicyExtractionTests(unittest.TestCase):
             extracted = extract_rules_node({"relevant_chunks": [_chunk("Read access is allowed.")]})
         evaluated = policy_evaluation_node(extracted)
         self.assertEqual(evaluated["decision"], "UNKNOWN")
-        self.assertIn("API unavailable", " ".join(extracted["warnings"]))
+        self.assertIn("Structured policy rules unavailable", " ".join(extracted["warnings"]))
 
     def test_validated_rule_reaches_deterministic_engine(self) -> None:
         chunk = _chunk("Read customer data is allowed.")
@@ -138,6 +138,53 @@ class PolicyExtractionTests(unittest.TestCase):
         evaluated = policy_evaluation_node(extracted)
         self.assertEqual(evaluated["decision"], "ALLOW")
         self.assertEqual(evaluated["supporting_excerpts"][0]["source"], "policy.md")
+
+    def test_unknown_access_result_keeps_supporting_evidence(self) -> None:
+        chunk = _chunk("Access requires a corporate laptop and MFA.")
+        rule = {
+            "action": "access",
+            "resource": "customer data",
+            "effect": "ALLOW",
+            "conditions": {"device": "corporate laptop", "mfa": "active"},
+            "evidence": [{"excerpt": chunk["content"]}],
+        }
+        with patch("agent.nodes.extract_policy_rules", return_value=[rule]):
+            extracted = extract_rules_node({"relevant_chunks": [chunk]})
+        evaluated = policy_evaluation_node(
+            {
+                **extracted,
+                "execution_metadata": {"situation": {"action": "access", "resource": "customer data"}},
+            }
+        )
+        self.assertEqual(evaluated["decision"], "UNKNOWN")
+        self.assertEqual(evaluated["supporting_excerpts"][0]["source"], "policy.md")
+
+    def test_condition_aliases_are_normalized_without_guessing(self) -> None:
+        rule = validate_policy_rule(
+            {
+                "action": "access",
+                "resource": "customer data",
+                "effect": "ALLOW",
+                "conditions": {"Mfa": "active", "Mfa active": "active", "Purpose": "documented"},
+                "evidence": [{"excerpt": "Access requires MFA."}],
+            }
+        )
+        self.assertIsNotNone(rule)
+        if rule is not None:
+            self.assertEqual(rule["conditions"], {"mfa": "active", "business_purpose": "documented"})
+
+    def test_conflicting_condition_aliases_are_rejected(self) -> None:
+        self.assertIsNone(
+            validate_policy_rule(
+                {
+                    "action": "access",
+                    "resource": "customer data",
+                    "effect": "ALLOW",
+                    "conditions": {"mfa": "active", "Mfa active": "inactive"},
+                    "evidence": [{"excerpt": "Access requires MFA."}],
+                }
+            )
+        )
 
 
 if __name__ == "__main__":

@@ -3,7 +3,7 @@
 **Policy ID:** DEMO-PRIVACY-CLASSIFICATION  
 **Version:** 1.0  
 **Effective date:** 2026-02-15  
-**Scope:** Fictional Acme Demo classification, regional handling, and privacy safeguards.
+**Scope:** region=ALL; department=ALL; vendor=ALL
 
 ## Purpose and Definitions
 

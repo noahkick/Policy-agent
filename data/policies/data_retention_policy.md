@@ -3,7 +3,7 @@
 **Policy ID:** DEMO-DATA-RETENTION  
 **Version:** 1.0  
 **Effective date:** 2026-02-01  
-**Scope:** Fictional Acme Demo customer data stored by internal teams.
+**Scope:** region=ALL; department=ALL; vendor=ALL
 
 ## Purpose and Definitions
 
